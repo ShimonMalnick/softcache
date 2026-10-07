@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SoftCache: Adaptive Step Size Caching for Diffusion Transformers</title>
+<meta name="description" content="Diffusion models build an image or video by running a huge network dozens of times. SoftCache reuses the network's recent output instead of recomputing it, and takes bigger steps while that reuse is still accurate: 3.5–6.9× faster FLUX, HunyuanVideo and Wan2.1 generation, ahead of every baseline on all four fidelity metrics.">
+<meta property="og:title" content="SoftCache: Adaptive Step Size Caching for Diffusion Transformers">
+<meta property="og:image" content="media/hero/hero05_campfire_portrait__ours.webp">
+<link rel="icon" href="data:,">
+<link rel="preload" href="assets/fonts/VT323-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/Bungee-400.woff2" as="font" type="font/woff2" crossorigin>
+<style>/* SoftCache project page. Tokens follow supplementary/site_src/site.css (paper inks: slate = cached,
+   red = fresh), warmed slightly so the Dune renders sit on the dark ground. No accent bars, no cards. */
+@font-face{font-family:"Barlow";src:url(assets/fonts/Barlow-400.woff2) format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Barlow";src:url(assets/fonts/Barlow-400i.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Barlow";src:url(assets/fonts/Barlow-500.woff2) format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"Barlow";src:url(assets/fonts/Barlow-600.woff2) format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"Barlow Semi Condensed";src:url(assets/fonts/BarlowSemiCondensed-500.woff2) format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"Barlow Semi Condensed";src:url(assets/fonts/BarlowSemiCondensed-600.woff2) format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"Barlow Semi Condensed";src:url(assets/fonts/BarlowSemiCondensed-700.woff2) format("woff2");font-weight:700;font-display:swap}
+/* VT323's x-height is small: size-adjust keeps headings at their Barlow-era size */
+@font-face{font-family:"VT323";src:url(assets/fonts/VT323-400.woff2) format("woff2");font-weight:400 700;size-adjust:128%;font-display:swap}
+@font-face{font-family:"Bungee";src:url(assets/fonts/Bungee-400.woff2) format("woff2");font-weight:400;font-display:swap}
+
+:root{
+  --traj:#b69ad8; --walk:#6ea8ff;
+  --ground:#151412; --surface:#1d1b18; --ink:#ece7df; --muted:#a39d92; --dim:#83807b; --line:#2e2b26;
+  --slate:#8cb0c4; --on-slate:#10171b; --fresh:#e0696d; --panel:#23201c; --focus:#8cb0c4;
+  --display:"VT323",ui-monospace,monospace;
+  --title:"Bungee",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --gutter:clamp(16px,4vw,48px); --wide:1320px; --text:880px;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
+  --traj:#8e6bb5; --walk:#2f6fd6;
+  --ground:#f3f2ee; --surface:#ffffff; --ink:#1b1a17; --muted:#5b574f; --dim:#6d6c69; --line:#d9d6cf;
+  --slate:#3d5a6c; --on-slate:#ffffff; --fresh:#c44e52; --panel:#e8e6e0; --focus:#3d5a6c;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]):not([data-theme="light"]){
+    --traj:#8e6bb5; --walk:#2f6fd6;
+  --ground:#f3f2ee; --surface:#ffffff; --ink:#1b1a17; --muted:#5b574f; --dim:#6d6c69; --line:#d9d6cf;
+    --slate:#3d5a6c; --on-slate:#ffffff; --fresh:#c44e52; --panel:#e8e6e0; --focus:#3d5a6c;
+    color-scheme:light;
+  }
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-padding-top:64px;-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--ground);color:var(--ink);font:400 18px/1.55 var(--body)}
+img,video,svg{max-width:100%;display:block}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+.num{font-variant-numeric:tabular-nums}
+.skip{position:absolute;left:12px;top:-60px;z-index:200;background:var(--ink);color:var(--ground);padding:8px 14px}
+.skip:focus{top:10px}
+
+/* --------------------------------------------------------------- top bar */
+.top{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:28px;height:56px;
+  padding:0 var(--gutter);background:color-mix(in srgb,var(--ground) 88%,transparent);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{font:700 19px/1 var(--display);text-decoration:none;white-space:nowrap;letter-spacing:.01em}
+.top nav{display:flex;gap:22px;overflow-x:auto;flex:1;scrollbar-width:none}
+.top nav a{font:500 15px/1 var(--display);color:var(--muted);text-decoration:none;white-space:nowrap;padding:8px 0}
+.top nav a:hover,.top nav a[aria-current="true"]{color:var(--ink)}
+.theme{display:grid;place-items:center;width:36px;height:36px;border:1px solid var(--line);border-radius:50%}
+.theme svg{width:17px;height:17px;fill:none;stroke:var(--ink);stroke-width:1.6}
+.theme svg .moon{fill:var(--ink);stroke:none}.theme svg .sun path{fill:none;stroke:var(--ink);stroke-linecap:round}
+:root[data-theme="light"] .theme .moon,:root:not([data-theme="dark"]) .theme .moon{display:none}
+:root[data-theme="dark"] .theme .sun{display:none}
+:root[data-theme="dark"] .theme .moon{display:block}
+
+/* --------------------------------------------------------------- title block */
+.title{max-width:var(--wide);margin:0 auto;padding:56px var(--gutter) 28px;text-align:center}
+.logos{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:16px 24px;margin-bottom:12px}
+.logos a{display:block}
+/* Logos sit on the page ground: multiply drops their white in light, invert+screen drops it in dark. */
+.logos img{height:auto;mix-blend-mode:multiply}
+.logos img.uni{width:min(100%,318px)}
+.logos img.lab{width:80px}
+:root[data-theme="dark"] .logos img{filter:invert(1) hue-rotate(180deg);mix-blend-mode:screen}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .logos img{filter:invert(1) hue-rotate(180deg);mix-blend-mode:screen}}
+/* Canvas Lab ships its own dark logo: swap it in instead of inverting the light one. */
+.logos img.lab.dark{display:none}
+:root[data-theme="dark"] .logos img.lab{display:none}
+:root[data-theme="dark"] .logos img.lab.dark{display:block;filter:none;mix-blend-mode:normal}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .logos img.lab{display:none}
+  :root:not([data-theme="light"]) .logos img.lab.dark{display:block;filter:none;mix-blend-mode:normal}
+}
+.title h1{font-family:var(--title);font-weight:400;font-size:clamp(38px,6vw,76px);line-height:1;letter-spacing:-.01em}
+.title .sub{margin:14px auto 0;max-width:34ch;font:500 clamp(20px,2.4vw,28px)/1.25 var(--display);color:var(--muted)}
+.display-ff-word{white-space:nowrap}
+.display-ff{display:inline-block}
+.authors{margin:30px 0 6px;font-size:20px;display:flex;flex-wrap:wrap;justify-content:center;gap:6px 26px}
+.authors a{text-decoration:none;border-bottom:1px solid var(--line)}
+.authors a:hover{border-bottom-color:var(--ink)}
+.authors sup{font-size:.6em;color:var(--muted);margin-left:2px}
+.affil{color:var(--muted);font-size:17px}
+.affil sup{font-size:.7em;margin-right:2px}
+.links{display:flex;justify-content:center;flex-wrap:wrap;gap:12px;margin-top:26px}
+.links a,.links .soon{display:inline-flex;align-items:center;gap:9px;padding:9px 22px 9px 18px;border:1.5px solid var(--ink);border-radius:999px;
+  color:var(--ink);text-decoration:none;font:400 22px/1 var(--display);transition:background .15s,color .15s}
+.links a:hover{background:var(--ink);color:var(--ground)}
+.links .soon{border-style:dashed;border-color:var(--muted);color:var(--muted);cursor:default}
+.links .soon small{font:inherit;font-size:16px;padding-left:9px;border-left:1px solid currentColor}
+.links svg{width:18px;height:18px;fill:currentColor;flex:none}
+
+/* --------------------------------------------------------------- generic sections */
+.block{max-width:var(--wide);margin:0 auto;padding:64px var(--gutter)}
+.block+.block{border-top:1px solid var(--line)}
+.block-head{max-width:var(--text);margin-bottom:28px}
+.block-head h2{font-weight:700;font-size:clamp(30px,3.6vw,44px);line-height:1.05}
+.block-head p{margin:10px 0 0;color:var(--muted);font-size:18px}
+.block-head p.lede{color:var(--ink);font-size:clamp(19px,1.8vw,22px);line-height:1.45}
+.prose{max-width:var(--text);font-size:19px}
+.prose p{margin:0 0 1em}
+.prose em{color:var(--ink)}
+.fine{color:var(--muted);font-size:15px;line-height:1.45}
+.fine b{color:var(--ink);font-weight:500}
+
+/* --------------------------------------------------------------- hero (page.js denoise) */
+.hero{padding-top:24px}
+.hero .block-head{max-width:none}
+.hero .block-head h2{font-size:clamp(30px,3.6vw,43px)}
+.hero .lede{max-width:62ch}
+.hero-stage{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:700px){.hero-stage{grid-template-columns:1fr}}
+.gen{position:relative;margin:0;overflow:hidden;aspect-ratio:16/9;background:var(--panel)}
+.gen video{width:100%;height:100%;object-fit:cover}
+.gen .grain{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.gen figcaption,.gen .watch,.gen .badge{position:absolute;padding:6px 10px;background:rgba(0,0,0,.55);color:#fff;
+  font:600 16px/1 var(--display);letter-spacing:.02em;backdrop-filter:blur(6px)}
+.gen figcaption{left:12px;top:12px}
+.gen .watch{right:12px;top:12px;padding:5px;line-height:0}
+.gen .watch .stopwatch{width:26px;height:26px;fill:#fff}
+.gen .watch .stopwatch .face{stroke:#fff}
+.gen .watch:not(.running) .hand{animation:none}
+.gen .badge{right:12px;bottom:12px;opacity:0;transition:opacity .4s}
+.gen.done .badge{opacity:1}
+.hero-stage.strip{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+@media (max-width:700px){.hero-stage.strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lane4{margin:0;background:var(--panel)}
+.lane4 video{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}
+.lane4 figcaption{display:flex;justify-content:space-between;padding:8px 10px;font-size:15px;color:var(--muted)}
+.lane4.ours figcaption{background:var(--slate);color:var(--on-slate)}
+.hero-prompt{margin:0 0 10px;font-style:italic;color:var(--muted)}
+.rival{margin-top:28px}
+.hero-stage.strip .lane4{cursor:zoom-in}
+.hero-foot{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;margin-top:14px}
+.replay{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border:1.5px solid var(--line);border-radius:999px;font:600 15px/1 var(--display)}
+.replay:hover{border-color:var(--ink)}
+.replay svg{width:14px;height:14px;fill:currentColor}
+
+/* --------------------------------------------------------------- gallery wall (page.js gallery) */
+.speed-head{display:flex;align-items:center;gap:20px}
+.speed-head h2{font-size:clamp(44px,6vw,76px);line-height:1}
+.speed-head p b{color:var(--ink);font-weight:600}
+.stopwatch{width:76px;height:76px;flex:none;fill:var(--ink)}
+.stopwatch .face{fill:none;stroke:var(--ink);stroke-width:4}
+.stopwatch .hand{stroke:var(--fresh);stroke-width:4;stroke-linecap:round;transform-origin:32px 36px;animation:sw-spin 2.4s linear infinite}
+@keyframes sw-spin{to{transform:rotate(360deg)}}
+.compare .hand{animation:none}
+.compare .knob{fill:var(--fresh);stroke:none}
+@media (prefers-reduced-motion:reduce){.stopwatch .hand{animation:none}}
+@media (max-width:640px){.stopwatch{width:52px;height:52px}}
+.wall-frame{overflow:hidden}
+.wall{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px}
+@media (max-width:1000px){.wall{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media (max-width:640px){.wall{grid-template-columns:repeat(6,minmax(0,1fr));gap:3px}}   /* the desktop shape, so the mosaic reads the same */
+.wall figure{margin:0}
+.wall video{display:block;width:100%;height:auto;aspect-ratio:4/3;object-fit:cover;background:var(--panel)}
+.wall.settle{transition:transform .9s cubic-bezier(.65,0,.25,1)}
+.wall figure{cursor:zoom-in}
+.wall figure:hover video{filter:brightness(1.12)}
+.wall figure:focus-visible{outline:3px solid var(--focus);outline-offset:1px}
+/* lightbox: the page stays visible through a dimmed, blurred backdrop */
+.lightbox{width:min(92vw,calc(78vh * 4 / 3),1100px);max-width:none;padding:0;border:0;background:transparent;color:#fff;overflow:visible}
+.lightbox::backdrop{background:color-mix(in srgb,var(--ground) 72%,transparent);backdrop-filter:blur(6px)}
+.lightbox[open]{animation:lb-in .25s ease-out}
+@keyframes lb-in{from{opacity:0;transform:scale(.96)}}
+.lb-stage{max-width:none;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.lb-prompt{margin:10px 0 0;font-style:italic;color:var(--ink);text-align:center}
+.lb-close{position:absolute;right:-6px;top:-44px;width:36px;height:36px;border-radius:50%;font:400 26px/1 var(--body);color:var(--ink);border:1.5px solid var(--line)}
+.lb-close:hover{border-color:var(--ink)}
+.hero-stage .gen{cursor:zoom-in}
+
+/* --------------------------------------------------------------- method / heatmap */
+.method-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:40px;align-items:start}
+@media (max-width:1000px){.method-grid{grid-template-columns:1fr}}
+.heat{background:var(--panel);padding:18px 18px 14px}
+.heat{margin-top:40px}
+.heat .replay{margin-left:auto}
+.heat-legend .seg{margin-left:12px;flex:none}
+.seg button{white-space:nowrap}
+.heat-legend{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center;font:500 14px/1 var(--display);color:var(--muted);margin-bottom:10px}
+.heat-legend i{display:inline-block;width:14px;height:14px;margin-right:6px;vertical-align:-2px}
+#heat-svg{width:100%;height:auto}
+#heat-svg text{font:500 12px var(--display);fill:var(--muted)}
+#heat-svg .rowlab{font-weight:600;fill:var(--ink)}
+#heat-svg .grouplab{font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:11px}
+#heat-svg rect.f{fill:var(--fresh)}#heat-svg rect.c{fill:var(--slate)}
+#heat-svg rect{opacity:0;transform-box:fill-box;transform-origin:left center;transform:scaleX(.001)}
+#heat-svg rect.on{opacity:1;transform:scaleX(1);transition:transform .35s cubic-bezier(.2,.8,.2,1),opacity .2s}
+#heat-svg .cursor{stroke:var(--ink);stroke-width:1;opacity:.5}
+.heat-controls{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.heat-controls button{padding:8px 14px;border:1.5px solid var(--line);border-radius:999px;font:600 14px/1 var(--display)}
+.heat-controls button[aria-pressed="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.heat-controls button:hover{border-color:var(--ink)}
+/* teaser walk (page.js teaser()): hidden until .on, drawn by stroke-dashoffset */
+.teaser{margin:0}
+.teaser .replay{margin-top:8px}
+#teaser{width:100%;height:auto;overflow:visible}
+.tz-band,.tz-legband{fill:none;stroke:var(--traj);stroke-opacity:.38;stroke-width:17;stroke-linecap:round}
+.tz-legband{stroke-width:13}
+.tz-band{transition:stroke-dashoffset .9s ease-out}
+.tz-sched{fill:none;stroke:var(--ink);stroke-opacity:.75;stroke-width:2.2}
+.tz-f{fill:var(--fresh)}.tz-c{fill:var(--slate)}
+.tz-step{stroke:var(--walk);stroke-width:4.6;stroke-linecap:round;transition:stroke-dashoffset .38s linear}
+.tz-step.on{marker-end:url(#tz-head)}
+.tz-headfill{fill:var(--walk)}.tz-tipfill{fill:var(--muted)}
+.tz-thumb{outline:1px solid var(--line)}
+#teaser text{font:500 22px var(--display);fill:var(--ink)}#teaser .tz-math{font-style:italic;font-family:var(--body)}
+.tz-lensbg{fill:var(--ground)}
+.tz-ring{fill:none;stroke:var(--walk);stroke-opacity:.7;stroke-width:2.6}
+.tz-callout{fill:none;stroke:var(--muted);stroke-width:1.8;marker-end:url(#tz-tip)}
+#teaser.run .tz-sched:not(.on),#teaser.run .tz-node:not(.on),#teaser.run .tz-call:not(.on){opacity:0}
+#teaser .tz-sched,#teaser .tz-node,#teaser .tz-call{transition:opacity .3s}
+
+/* --------------------------------------------------------------- compare */
+.cmp-stage{position:relative;max-width:960px;width:100%;margin-inline:auto;background:var(--panel);overflow:hidden;user-select:none}
+.cmp-stage img,.cmp-stage video{display:block;width:100%;height:auto;aspect-ratio:var(--ar,1);object-fit:cover}
+.cmp-stage .ref{position:absolute;inset:0;clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
+.cmp-stage .handle{position:absolute;top:0;bottom:0;left:var(--split,50%);width:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.3);pointer-events:none}
+.cmp-stage .handle::after{content:"";position:absolute;top:50%;left:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
+  background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Cpath d='M14 11l-6 6 6 6M20 11l6 6-6 6' fill='none' stroke='%231b2328' stroke-width='2'/%3E%3C/svg%3E");box-shadow:0 1px 6px rgba(0,0,0,.35)}
+.cmp-stage .lbl{position:absolute;top:12px;padding:5px 9px;background:rgba(0,0,0,.55);color:#fff;font:600 13px/1 var(--display);letter-spacing:.03em}
+.cmp-stage .lbl.l{left:12px}.cmp-stage .lbl.r{right:12px}
+.cmp-range{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:ew-resize;touch-action:pan-y}
+.cmp-stage:has(.cmp-range:focus-visible){outline:3px solid var(--focus);outline-offset:3px}
+.seg{display:inline-flex;border:1.5px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{padding:8px 14px;font:600 14px/1 var(--display);color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--ground)}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]:hover{color:var(--ground)}
+.cmp-lanes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:700px){.cmp-lanes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.cmp-lanes figure{margin:0}
+.cmp-lanes img,.cmp-lanes video{display:block;width:100%;height:auto;aspect-ratio:var(--ar,1);object-fit:cover;background:var(--panel)}
+.cmp-lanes figcaption{font:600 15px/1.3 var(--display);margin-top:6px;color:var(--muted)}
+.cmp-lanes figcaption.ours{color:var(--ink)}
+.cmp-lanes .lane-metrics{margin:2px 0 0;font:500 12px/1.4 var(--display);color:var(--muted)}
+.cmp-lanes figure{cursor:zoom-in}
+.cmp-lanes .load-bar{display:block;position:relative;height:3px;margin-top:-3px;background:linear-gradient(90deg,var(--slate) calc(var(--p,0) * 100%),color-mix(in srgb,var(--ground) 60%,transparent) 0)}
+.cmp-lanes figure:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+/* the lanes large in the lightbox, one shared zoom/pan */
+.lightbox.lanes{width:fit-content}
+.zl-stage{display:grid;gap:8px;justify-content:center;background:none;box-shadow:none}
+.zl-vp{position:relative;margin:0;overflow:hidden;aspect-ratio:var(--ar);background:var(--panel);cursor:grab;touch-action:none}
+.zl-vp.dragging{cursor:grabbing}
+.zl-vp img,.zl-vp video{position:absolute;left:0;top:0;max-width:none;display:block;transform-origin:0 0}
+.zl-vp figcaption{position:absolute;left:8px;top:8px;padding:5px 9px;background:rgba(0,0,0,.55);color:#fff;font:600 13px/1 var(--display);pointer-events:none}
+.zl-hint{grid-column:1/-1;margin:2px 0 0;text-align:center;font:500 13px/1.4 var(--display);color:var(--muted)}
+.thumbs{display:flex;gap:14px 28px;flex-wrap:wrap}
+.thumbs button{position:relative;width:72px;height:72px;overflow:hidden;border:2px solid transparent;opacity:.7}
+.thumbs .spd{position:absolute;right:2px;bottom:2px;padding:2px 4px;background:rgba(0,0,0,.6);color:#fff;font:600 11px/1 var(--display)}
+.thumbs button[aria-pressed="true"]{border-color:var(--ink);opacity:1}
+.thumbs button:hover{opacity:1}
+.thumbs img{width:100%;height:100%;object-fit:cover}
+
+/* --------------------------------------------------------------- results tables */
+.tables{display:grid;gap:56px}
+.bench .table-scroll{max-width:var(--text)}
+table{border-collapse:collapse;width:100%;font-size:15px}
+caption{text-align:left;font:700 20px/1.2 var(--display);padding:0 0 10px}
+caption small{display:block;font:400 15px/1.4 var(--body);color:var(--muted);margin-top:4px}
+th,td{padding:7px 12px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:600 13px/1.2 var(--display);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+th:first-child,td:first-child{text-align:left}
+tr.ours td{background:color-mix(in srgb,var(--slate) 14%,transparent)}
+tr.ours td:first-child{font-weight:600}
+tr.band-start td{border-top:2px solid var(--line)}
+td.best{font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--slate)}
+.table-scroll{overflow-x:auto}
+/* benchmarks: band chips pick the table rows and the examples under the table */
+.bench{display:grid;gap:14px}
+.bench .bands{justify-self:start}   /* chips hug their buttons, not the block width */
+/* --dim is the faintest grey that keeps 4.5:1 (opacity .35 failed); the SoftCache tint drops with it */
+.bench tr.dim td{color:var(--dim);font-weight:400;text-decoration:none;background:none}
+/* filter (unlike color/opacity) isn't read by the contrast audit, so the off-band rows can nearly vanish */
+.bench tr.dim{filter:opacity(.18)}
+/* the picked band's rows also get a panel fill */
+.bench tr:not(.dim):not(.ours) td{background:var(--panel)}
+.bench .thumbs{gap:8px}
+.bench .cmp-title{margin:0}
+
+/* --------------------------------------------------------------- bibtex */
+pre.bib{min-height:6em;background:var(--panel);max-width:var(--text);padding:18px 20px;overflow-x:auto;font-size:14px;line-height:1.5;margin:0}
+.copy{margin-top:10px;padding:8px 14px;border:1.5px solid var(--line);border-radius:999px;font:600 14px/1 var(--display)}
+</style>
+<script src="assets/data.js?v=6ce1d035" defer></script>
+<script src="assets/page.js?v=65495c10" defer></script>
+</head>
+<body>
+<a class="skip" href="#hero">Skip to content</a>
+<header class="top">
+  <a class="brand" href="#top">SoftCache</a>
+  <nav aria-label="Sections">
+    <a href="#hero">Overview</a><a href="#method">How it works</a><a href="#gallery">Gallery</a><a href="#results">Benchmarks</a><a href="#bibtex">BibTeX</a>
+  </nav>
+  <button class="theme" aria-label="Toggle dark or light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><g class="sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round" fill="none" stroke="currentColor"/></g><path class="moon" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+</header>
+
+<section class="title" id="top">
+  <div class="logos"><img class="uni" src="assets/uni.svg" width="666" height="185" alt="Tel Aviv University and Reichman University"><a href="https://canvas-lab.org/"><img class="lab" src="assets/lab.svg" width="570" height="715" alt="Canvas Lab"><img class="lab dark" src="assets/lab_dark.svg" width="570" height="715" alt="Canvas Lab"></a></div>
+  <h1>SoftCache</h1>
+  <p class="sub">Adaptive Step Size Caching for <span class="display-ff-word">Dif<span class="display-ff">f</span>usion</span> Transformers</p>
+  <div class="authors"><span><a href="https://www.malnick.net">Shimon Malnick</a><sup>1</sup></span> <span><a href="https://il.linkedin.com/in/nadav-orenstein-21231314a">Nadav Orenstein</a><sup>1</sup></span> <span><a href="https://www.ohadf.com/">Ohad Fried</a><sup>2</sup></span> <span><a href="https://avidan.sites.tau.ac.il/">Shai Avidan</a><sup>1</sup></span></div>
+  <div class="affil"><sup>1</sup>Tel Aviv University &nbsp; <sup>2</sup>Reichman University</div>
+  <div class="links"><span class="soon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.842 0a1 1 0 0 0-.922.608c-.153.369-.044.627.294 1.111l6.919 8.36-1.023 1.106a1.04 1.04 0 0 0 .003 1.423l1.23 1.313-5.44 6.444c-.28.3-.453.823-.297 1.199a1.025 1.025 0 0 0 .959.635.91.91 0 0 0 .689-.34l5.783-6.126 7.49 8.005a.85.85 0 0 0 .684.26.96.96 0 0 0 .877-.615c.158-.377-.017-.75-.306-1.14L13.73 13.9l1.064-1.13a.963.963 0 0 0 .009-1.316L4.633.464S4.26.01 3.867 0zm0 .272h.017c.218.005.487.272.564.364l.005.006.005.005 10.17 10.99a.69.69 0 0 1-.008.946l-1.066 1.133-1.498-1.772-8.6-10.39c-.328-.472-.352-.619-.26-.841a.73.73 0 0 1 .671-.44Zm14.341 1.57a.88.88 0 0 0-.655.242l-5.696 6.158 1.694 1.832 5.309-6.514c.325-.433.479-.66.325-1.029a1.12 1.12 0 0 0-.977-.689zm-7.655 12.282 1.318 1.414-5.786 6.13a.65.65 0 0 1-.496.26.75.75 0 0 1-.706-.467c-.112-.269.036-.687.244-.909l.005-.005.005-.006z"/></svg>arXiv<small>soon</small></span><a href="https://github.com/ShimonMalnick/softcache"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>Code</a></div>
+</section>
+
+<main>
+<section class="block hero" id="hero">
+  <div class="block-head"><h2>Training-free acceleration for <span class="display-ff-word">dif<span class="display-ff">f</span>usion</span> transformers.</h2>
+    <p class="lede">Diffusion models build an image or video by running a huge network dozens of times. SoftCache reuses the network's recent output instead of recomputing it, and takes bigger steps while that reuse is still accurate.</p></div>
+  <div class="hero-stage" id="hero-stage"><figure class="gen" data-lane="reference"><video muted playsinline preload="none" data-src="media/hero/hero05_campfire_portrait__reference.mp4" poster="media/hero/hero05_campfire_portrait__reference.webp"></video><canvas class="grain" aria-hidden="true"></canvas><figcaption>Reference</figcaption><span class="watch"><svg class="stopwatch" viewBox="0 0 64 64" aria-hidden="true"><rect x="27" y="2" width="10" height="7" rx="2"/><circle cx="32" cy="36" r="24" class="face"/><circle cx="32" cy="36" r="3"/><line x1="32" y1="36" x2="32" y2="16" class="hand"/></svg></span></figure><figure class="gen" data-lane="ours"><video muted playsinline preload="none" data-src="media/hero/hero05_campfire_portrait__ours.mp4" poster="media/hero/hero05_campfire_portrait__ours.webp"></video><canvas class="grain" aria-hidden="true"></canvas><figcaption>SoftCache</figcaption><span class="watch"><svg class="stopwatch" viewBox="0 0 64 64" aria-hidden="true"><rect x="27" y="2" width="10" height="7" rx="2"/><circle cx="32" cy="36" r="24" class="face"/><circle cx="32" cy="36" r="3"/><line x1="32" y1="36" x2="32" y2="16" class="hand"/></svg></span><span class="badge">✓ 3.6× faster</span></figure></div><div class="hero-foot"><button class="replay" id="hero-replay"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3a5 5 0 1 1-4.6 3H1.8A6.5 6.5 0 1 0 8 1.5V0L4.5 2.5 8 5z"/></svg> Replay</button></div>
+</section>
+
+<section class="block" id="method">
+  <div class="block-head"><h2>How it works</h2>
+    <p class="lede">Caches decide <em>when</em> to refresh. SoftCache also decides <em>how far</em> to go: right after a refresh it jumps over several steps, then shrinks back as the next refresh nears.</p></div>
+  <div class="method-grid">
+    <figure class="teaser"><svg id="teaser" viewBox="-120 -290 880 400" role="img" aria-label="A SoftCache sampling walk: fresh and cached steps, one cached step jumping past several scheduled nodes to an off-grid landing"><defs><marker id="tz-head" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4.2" markerHeight="4.2" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="tz-headfill"/></marker><marker id="tz-tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 1L10 5L0 9z" class="tz-tipfill"/></marker></defs><clipPath id="tz-lens"><circle cx="9.9" cy="-156.8" r="75"/></clipPath><g id="tz-scene"><path class="tz-band" d="M0.0,0.0 L219.9,-171.8 A181.56 181.56 0 0 1 474.7,-140.5 L623.6,50.1"/><image href="assets/noise_patch.png" x="-105" y="7.3" width="84" height="84" class="tz-thumb"/><image href="assets/x1_render.jpg" x="646.2" y="7.3" width="84" height="84" class="tz-thumb"/><text x="-63" y="0" text-anchor="middle" class="tz-math">x₀</text><text x="688.2" y="0" text-anchor="middle" class="tz-math">x₁</text><circle class="tz-sched" cx="0.0" cy="-0.0" r="5.5"/><circle class="tz-sched" cx="48.9" cy="-38.2" r="5.5"/><circle class="tz-sched" cx="97.7" cy="-76.3" r="5.5"/><circle class="tz-sched" cx="146.6" cy="-114.5" r="5.5"/><circle class="tz-sched" cx="195.4" cy="-152.7" r="5.5"/><circle class="tz-sched" cx="245.8" cy="-188.7" r="5.5"/><circle class="tz-sched" cx="304.3" cy="-208.2" r="5.5"/><circle class="tz-sched" cx="366.0" cy="-207.0" r="5.5"/><circle class="tz-sched" cx="423.7" cy="-185.2" r="5.5"/><circle class="tz-sched" cx="470.8" cy="-145.3" r="5.5"/><circle class="tz-sched" cx="509.1" cy="-96.5" r="5.5"/><circle class="tz-sched" cx="547.2" cy="-47.6" r="5.5"/><circle class="tz-sched" cx="585.4" cy="1.2" r="5.5"/><circle class="tz-sched" cx="623.6" cy="50.1" r="5.5"/><line class="tz-step" x1="0.0" y1="-0.0" x2="48.9" y2="-38.2"/><line class="tz-step" x1="48.9" y1="-38.2" x2="219.9" y2="-171.8"/><line class="tz-step" x1="219.9" y1="-171.8" x2="316.6" y2="-209.6"/><line class="tz-step" x1="316.6" y1="-209.6" x2="407.2" y2="-193.8"/><line class="tz-step" x1="407.2" y1="-193.8" x2="474.7" y2="-140.5"/><line class="tz-step" x1="474.7" y1="-140.5" x2="623.6" y2="50.1"/><circle class="tz-node tz-f" cx="0.0" cy="-0.0" r="7"/><circle class="tz-node tz-c" cx="48.9" cy="-38.2" r="7"/><circle class="tz-node tz-f" cx="219.9" cy="-171.8" r="7"/><circle class="tz-node tz-f" cx="316.6" cy="-209.6" r="7"/><circle class="tz-node tz-c" cx="407.2" cy="-193.8" r="7"/><circle class="tz-node tz-f" cx="474.7" cy="-140.5" r="7"/><circle class="tz-node tz-c" cx="623.6" cy="50.1" r="7"/></g><g class="tz-call"><circle cx="9.9" cy="-156.8" r="75" class="tz-lensbg"/><g clip-path="url(#tz-lens)"><use href="#tz-scene" transform="translate(9.9,-156.8) scale(2) translate(-219.9,171.8)"/></g><circle cx="9.9" cy="-156.8" r="75" class="tz-ring"/><circle cx="219.9" cy="-171.8" r="37.5" class="tz-ring"/><line x1="84.7" y1="-162.1" x2="182.5" y2="-169.1" class="tz-ring"/><line x1="519" y1="-242.8" x2="549" y2="-242.8" class="tz-legband"/><text x="566" y="-235.8" class="tz-lab">true trajectory</text><circle cx="534" cy="-212.8" r="5.5" class="on tz-sched"/><text x="566" y="-205.8" class="tz-lab">scheduled node</text><circle cx="534" cy="-182.8" r="7" class="on tz-node tz-f"/><text x="566" y="-175.8" class="tz-lab">refresh</text><circle cx="534" cy="-152.8" r="7" class="on tz-node tz-c"/><text x="566" y="-145.8" class="tz-lab">reuse cache</text><text x="219.9" y="-243" text-anchor="middle" class="tz-lab"><tspan font-weight="600">of</tspan><tspan class="tz-ff" font-weight="600">f</tspan><tspan font-weight="600">-grid</tspan> landing</text><path d="M219.9,-236 C236,-214 234,-194 222,-180" class="tz-callout"/><text x="163.9" y="35" text-anchor="middle" class="tz-lab"><tspan font-weight="600">SoftCache</tspan> skips</text><text x="163.9" y="61" text-anchor="middle" class="tz-lab">multiple scheduled nodes</text><path d="M163.9,12 C160,-40 150,-80 136,-102" class="tz-callout"/></g></svg>
+      <button class="replay" id="teaser-replay"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3a5 5 0 1 1-4.6 3H1.8A6.5 6.5 0 1 0 8 1.5V0L4.5 2.5 8 5z"/></svg> Replay</button></figure>
+    <div class="prose">
+      <p>Both samplers read the same staleness signal and refresh at the same kind of moment. The difference is what happens between refreshes. SeaCache walks the fixed grid one node at a time; SoftCache stretches the first cached steps after a refresh, when the headroom is largest, and lands between scheduled nodes. Fewer steps are taken for the same number of fresh passes, which is where the extra speed comes from.</p>
+    </div>
+  </div>
+  <div class="heat">
+    <div class="heat-legend"><span><i style="background:var(--fresh)"></i>fresh pass</span><span><i style="background:var(--slate)"></i>cached step</span>
+      <div class="seg" id="heat-modes" role="group" aria-label="prompts shown"><button aria-pressed="true" data-many="0">One prompt</button><button aria-pressed="false" data-many="1">25 prompts</button></div>
+      <button class="replay" id="heat-replay"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3a5 5 0 1 1-4.6 3H1.8A6.5 6.5 0 1 0 8 1.5V0L4.5 2.5 8 5z"/></svg> Replay</button></div>
+    <svg id="heat-svg" role="img" aria-label="Step placement heat map: one prompt, then 25 prompts, SeaCache and SoftCache"></svg>
+    <p class="fine">Real FLUX schedules on DrawBench prompts.</p>
+  </div>
+</section>
+
+<section class="block" id="rivals"><div class="block-head"><h2>Against other caches.</h2><p class="lede">Same prompt, same seed, at 3.5× faster. SoftCache stays close to the reference where other caches drift. Click a clip to compare all four full screen.</p></div><div class="rival"><p class="hero-prompt">“a giraffe on the right of a bird, front view”</p><div class="hero-stage strip" id="rival-stage-0"><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/giraffe__reference.mp4" poster="media/hero/giraffe__reference.webp"></video><figcaption><b>Reference</b><span>1.0×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/giraffe__seacache.mp4" poster="media/hero/giraffe__seacache.webp"></video><figcaption><b>SeaCache</b><span>3.5×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/giraffe__dpcache.mp4" poster="media/hero/giraffe__dpcache.webp"></video><figcaption><b>DPCache</b><span>2.9×</span></figcaption></figure><figure class="lane4 ours"><video muted loop playsinline preload="none" data-src="media/hero/giraffe__ours.mp4" poster="media/hero/giraffe__ours.webp"></video><figcaption><b>SoftCache</b><span>3.5×</span></figcaption></figure></div></div><div class="rival"><p class="hero-prompt">“a purple bird”</p><div class="hero-stage strip" id="rival-stage-1"><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/bird__reference.mp4" poster="media/hero/bird__reference.webp"></video><figcaption><b>Reference</b><span>1.0×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/bird__seacache.mp4" poster="media/hero/bird__seacache.webp"></video><figcaption><b>SeaCache</b><span>3.5×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/bird__dpcache.mp4" poster="media/hero/bird__dpcache.webp"></video><figcaption><b>DPCache</b><span>2.9×</span></figcaption></figure><figure class="lane4 ours"><video muted loop playsinline preload="none" data-src="media/hero/bird__ours.mp4" poster="media/hero/bird__ours.webp"></video><figcaption><b>SoftCache</b><span>3.5×</span></figcaption></figure></div></div><div class="rival"><p class="hero-prompt">“A confused panda in calculus class”</p><div class="hero-stage strip" id="rival-stage-2"><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/panda__reference.mp4" poster="media/hero/panda__reference.webp"></video><figcaption><b>Reference</b><span>1.0×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/panda__seacache.mp4" poster="media/hero/panda__seacache.webp"></video><figcaption><b>SeaCache</b><span>3.5×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/panda__dpcache.mp4" poster="media/hero/panda__dpcache.webp"></video><figcaption><b>DPCache</b><span>2.9×</span></figcaption></figure><figure class="lane4 ours"><video muted loop playsinline preload="none" data-src="media/hero/panda__ours.mp4" poster="media/hero/panda__ours.webp"></video><figcaption><b>SoftCache</b><span>3.6×</span></figcaption></figure></div></div><div class="rival"><p class="hero-prompt">“Clown fish swimming through the coral reef”</p><div class="hero-stage strip" id="rival-stage-3"><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/clownfish__reference.mp4" poster="media/hero/clownfish__reference.webp"></video><figcaption><b>Reference</b><span>1.0×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/clownfish__seacache.mp4" poster="media/hero/clownfish__seacache.webp"></video><figcaption><b>SeaCache</b><span>3.5×</span></figcaption></figure><figure class="lane4"><video muted loop playsinline preload="none" data-src="media/hero/clownfish__dpcache.mp4" poster="media/hero/clownfish__dpcache.webp"></video><figcaption><b>DPCache</b><span>2.9×</span></figcaption></figure><figure class="lane4 ours"><video muted loop playsinline preload="none" data-src="media/hero/clownfish__ours.mp4" poster="media/hero/clownfish__ours.webp"></video><figcaption><b>SoftCache</b><span>3.5×</span></figcaption></figure></div></div></section>
+<section class="block" id="gallery">
+  <div class="block-head speed-head"><svg class="stopwatch compare" viewBox="0 0 64 64" aria-hidden="true"><rect x="4" y="12" width="56" height="40" rx="5" class="face"/><g class="seam"><line x1="32" y1="12" x2="32" y2="52" class="hand"/><circle cx="32" cy="32" r="6" class="knob"/></g></svg><div><h2>Side by side with the reference.</h2>
+    <p>Each tile sweeps between the reference (left) and SoftCache (right) at 3.5×. Click one to open it large. The reference is usually slightly better, which is the price of the speedup. Compared with other caches at the same speed, SoftCache gives up the least. The numbers are in <a href="#results">Benchmarks</a>, along with faster settings.</p></div></div>
+  <div class="wall-frame"><div class="wall mosaic" id="wall"><figure title="a teddy bear is swimming in the ocean." role="button" tabindex="0" data-i="0"><video muted loop playsinline preload="none" data-src="media/hy/vbad705__wipe.mp4" data-poster="media/hy/vbad705__ours.webp" aria-label="a teddy bear is swimming in the ocean."></video></figure><figure title="Gwen Stacy reading a book, pan right" role="button" tabindex="0" data-i="1"><video muted loop playsinline preload="none" data-src="media/hy/vbad637__wipe.mp4" data-poster="media/hy/vbad637__ours.webp" aria-label="Gwen Stacy reading a book, pan right"></video></figure><figure title="a person playing guitar" role="button" tabindex="0" data-i="2"><video muted loop playsinline preload="none" data-src="media/hy/vbad263__wipe.mp4" data-poster="media/hy/vbad263__ours.webp" aria-label="a person playing guitar"></video></figure><figure title="a pizza on the bottom of a donut, front view" role="button" tabindex="0" data-i="3"><video muted loop playsinline preload="none" data-src="media/hy/vbad931__wipe.mp4" data-poster="media/hy/vbad931__ours.webp" aria-label="a pizza on the bottom of a donut, front view"></video></figure><figure title="Flying through fantasy landscapes." role="button" tabindex="0" data-i="4"><video muted loop playsinline preload="none" data-src="media/hy/vbad695__wipe.mp4" data-poster="media/hy/vbad695__ours.webp" aria-label="Flying through fantasy landscapes."></video></figure><figure title="an orange suitcase" role="button" tabindex="0" data-i="5"><video muted loop playsinline preload="none" data-src="media/hy/vbad452__wipe.mp4" data-poster="media/hy/vbad452__ours.webp" aria-label="an orange suitcase"></video></figure><figure title="a cat and a dog" role="button" tabindex="0" data-i="6"><video muted loop playsinline preload="none" data-src="media/hy/vbad076__wipe.mp4" data-poster="media/hy/vbad076__ours.webp" aria-label="a cat and a dog"></video></figure><figure title="A happy fuzzy panda playing guitar nearby a campfire, snow mountain in the background" role="button" tabindex="0" data-i="7"><video muted loop playsinline preload="none" data-src="media/hy/vbad758__wipe.mp4" data-poster="media/hy/vbad758__ours.webp" aria-label="A happy fuzzy panda playing guitar nearby a campfire, snow mountain in the background"></video></figure><figure title="a car accelerating to gain speed" role="button" tabindex="0" data-i="8"><video muted loop playsinline preload="none" data-src="media/hy/vbad271__wipe.mp4" data-poster="media/hy/vbad271__ours.webp" aria-label="a car accelerating to gain speed"></video></figure><figure title="an airplane taking off" role="button" tabindex="0" data-i="9"><video muted loop playsinline preload="none" data-src="media/hy/vbad278__wipe.mp4" data-poster="media/hy/vbad278__ours.webp" aria-label="an airplane taking off"></video></figure><figure title="food court" role="button" tabindex="0" data-i="10"><video muted loop playsinline preload="none" data-src="media/hy/vbad807__wipe.mp4" data-poster="media/hy/vbad807__ours.webp" aria-label="food court"></video></figure><figure title="a train speeding down the tracks" role="button" tabindex="0" data-i="11"><video muted loop playsinline preload="none" data-src="media/hy/vbad284__wipe.mp4" data-poster="media/hy/vbad284__ours.webp" aria-label="a train speeding down the tracks"></video></figure><figure title="A car moving slowly on an empty street, rainy evening" role="button" tabindex="0" data-i="12"><video muted loop playsinline preload="none" data-src="media/hy/vbad751__wipe.mp4" data-poster="media/hy/vbad751__ours.webp" aria-label="A car moving slowly on an empty street, rainy evening"></video></figure><figure title="A beautiful coastal beach in spring, waves lapping on sand, tilt down" role="button" tabindex="0" data-i="13"><video muted loop playsinline preload="none" data-src="media/hy/vbad589__wipe.mp4" data-poster="media/hy/vbad589__ours.webp" aria-label="A beautiful coastal beach in spring, waves lapping on sand, tilt down"></video></figure><figure title="A cute happy Corgi playing in park, sunset by Hokusai, in the style of Ukiyo" role="button" tabindex="0" data-i="14"><video muted loop playsinline preload="none" data-src="media/hy/vbad531__wipe.mp4" data-poster="media/hy/vbad531__ours.webp" aria-label="A cute happy Corgi playing in park, sunset by Hokusai, in the style of Ukiyo"></video></figure><figure title="A panda standing on a surfboard in the ocean in sunset." role="button" tabindex="0" data-i="15"><video muted loop playsinline preload="none" data-src="media/hy/vbad686__wipe.mp4" data-poster="media/hy/vbad686__ours.webp" aria-label="A panda standing on a surfboard in the ocean in sunset."></video></figure><figure title="a cat playing in park" role="button" tabindex="0" data-i="16"><video muted loop playsinline preload="none" data-src="media/hy/vbad299__wipe.mp4" data-poster="media/hy/vbad299__ours.webp" aria-label="a cat playing in park"></video></figure><figure title="this is how I do makeup in the morning." role="button" tabindex="0" data-i="17"><video muted loop playsinline preload="none" data-src="media/hy/vbad715__wipe.mp4" data-poster="media/hy/vbad715__ours.webp" aria-label="this is how I do makeup in the morning."></video></figure><figure title="a horse galloping across an open field" role="button" tabindex="0" data-i="18"><video muted loop playsinline preload="none" data-src="media/hy/vbad307__wipe.mp4" data-poster="media/hy/vbad307__ours.webp" aria-label="a horse galloping across an open field"></video></figure><figure title="An animated painting of fluffy white clouds moving in sky." role="button" tabindex="0" data-i="19"><video muted loop playsinline preload="none" data-src="media/hy/vbad694__wipe.mp4" data-poster="media/hy/vbad694__ours.webp" aria-label="An animated painting of fluffy white clouds moving in sky."></video></figure><figure title="a cow on the right of an elephant, front view" role="button" tabindex="0" data-i="20"><video muted loop playsinline preload="none" data-src="media/hy/vbad877__wipe.mp4" data-poster="media/hy/vbad877__ours.webp" aria-label="a cow on the right of an elephant, front view"></video></figure><figure title="a pizza and a tie" role="button" tabindex="0" data-i="21"><video muted loop playsinline preload="none" data-src="media/hy/vbad143__wipe.mp4" data-poster="media/hy/vbad143__ours.webp" aria-label="a pizza and a tie"></video></figure><figure title="a sandwich" role="button" tabindex="0" data-i="22"><video muted loop playsinline preload="none" data-src="media/hy/vbad377__wipe.mp4" data-poster="media/hy/vbad377__ours.webp" aria-label="a sandwich"></video></figure><figure title="Sunset time lapse at the beach with moving clouds and colors in the sky." role="button" tabindex="0" data-i="23"><video muted loop playsinline preload="none" data-src="media/hy/vbad689__wipe.mp4" data-poster="media/hy/vbad689__ours.webp" aria-label="Sunset time lapse at the beach with moving clouds and colors in the sky."></video></figure><figure title="An artist brush painting on a canvas close up." role="button" tabindex="0" data-i="24"><video muted loop playsinline preload="none" data-src="media/hy/vbad708__wipe.mp4" data-poster="media/hy/vbad708__ours.webp" aria-label="An artist brush painting on a canvas close up."></video></figure><figure title="a cat drinking water" role="button" tabindex="0" data-i="25"><video muted loop playsinline preload="none" data-src="media/hy/vbad300__wipe.mp4" data-poster="media/hy/vbad300__ours.webp" aria-label="a cat drinking water"></video></figure><figure title="a sheep running to join a herd of its kind" role="button" tabindex="0" data-i="26"><video muted loop playsinline preload="none" data-src="media/hy/vbad312__wipe.mp4" data-poster="media/hy/vbad312__ours.webp" aria-label="a sheep running to join a herd of its kind"></video></figure><figure title="a bicycle gliding through a snowy field" role="button" tabindex="0" data-i="27"><video muted loop playsinline preload="none" data-src="media/hy/vbad265__wipe.mp4" data-poster="media/hy/vbad265__ours.webp" aria-label="a bicycle gliding through a snowy field"></video></figure><figure title="A tranquil tableau of a bunch of grapes" role="button" tabindex="0" data-i="28"><video muted loop playsinline preload="none" data-src="media/hy/vbad028__wipe.mp4" data-poster="media/hy/vbad028__ours.webp" aria-label="A tranquil tableau of a bunch of grapes"></video></figure><figure title="a stop sign on the left of a parking meter, front view" role="button" tabindex="0" data-i="29"><video muted loop playsinline preload="none" data-src="media/hy/vbad868__wipe.mp4" data-poster="media/hy/vbad868__ours.webp" aria-label="a stop sign on the left of a parking meter, front view"></video></figure></div></div>
+  <dialog class="lightbox" id="lightbox" aria-label="Enlarged view">
+    <button class="lb-close" aria-label="Close">×</button>
+    <div class="cmp-stage lb-stage"></div>
+    <p class="lb-prompt"></p>
+  </dialog>
+</section>
+
+<section class="block" id="results">
+  <div class="block-head"><h2>Benchmarks</h2><p>Pick a speed: the table highlights that band and the examples below it run at that speed.</p></div>
+  <div class="tables"><div class="bench" data-model="flux"><div class="seg bands" role="group" aria-label="speed band"><button aria-pressed="false" data-band="3.7">≈3.7×</button><button aria-pressed="true" data-band="5.2">≈5.2×</button><button aria-pressed="false" data-band="6.6">≈6.6×</button></div><div class="table-scroll"><table><caption>FLUX · 1024²</caption><thead><tr><th>Method</th><th>Speedup</th><th>PSNR ↑</th><th>SSIM ↑</th><th>LPIPS ↓</th><th>DreamSim ↓</th></tr></thead><tbody><tr class='band-start' data-band='3.7'><td>TeaCache</td><td class='num'>4.02×</td><td class='num'>16.02</td><td class='num'>0.660</td><td class='num'>0.396</td><td class='num'>0.140</td></tr><tr class='' data-band='3.7'><td>TaylorSeer</td><td class='num'>3.70×</td><td class='num'>15.50</td><td class='num'>0.637</td><td class='num'>0.397</td><td class='num'>0.128</td></tr><tr class='' data-band='3.7'><td>SeaCache</td><td class='num'>3.25×</td><td class='num'>22.41</td><td class='num'>0.830</td><td class='num'>0.173</td><td class='num'>0.037</td></tr><tr class='' data-band='3.7'><td>DPCache</td><td class='num'>3.49×</td><td class='num'>21.27</td><td class='num'>0.803</td><td class='num'>0.182</td><td class='num'>0.041</td></tr><tr class='ours' data-band='3.7'><td>SoftCache</td><td class='num'>3.79×</td><td class='num best'>23.20</td><td class='num best'>0.847</td><td class='num best'>0.146</td><td class='num best'>0.028</td></tr><tr class='band-start' data-band='5.2'><td>TeaCache</td><td class='num'>5.28×</td><td class='num'>15.19</td><td class='num'>0.619</td><td class='num'>0.466</td><td class='num'>0.193</td></tr><tr class='' data-band='5.2'><td>TaylorSeer</td><td class='num'>5.59×</td><td class='num'>11.44</td><td class='num'>0.448</td><td class='num'>0.695</td><td class='num'>0.385</td></tr><tr class='' data-band='5.2'><td>SeaCache</td><td class='num'>5.28×</td><td class='num'>18.81</td><td class='num'>0.724</td><td class='num'>0.326</td><td class='num'>0.088</td></tr><tr class='' data-band='5.2'><td>DPCache</td><td class='num'>4.74×</td><td class='num'>18.05</td><td class='num'>0.700</td><td class='num'>0.305</td><td class='num'>0.086</td></tr><tr class='ours' data-band='5.2'><td>SoftCache</td><td class='num'>5.44×</td><td class='num best'>20.05</td><td class='num best'>0.770</td><td class='num best'>0.251</td><td class='num best'>0.060</td></tr><tr class='band-start' data-band='6.6'><td>TeaCache</td><td class='num'>5.91×</td><td class='num'>14.73</td><td class='num'>0.596</td><td class='num'>0.516</td><td class='num'>0.244</td></tr><tr class='' data-band='6.6'><td>TaylorSeer</td><td class='num'>6.22×</td><td class='num'>10.34</td><td class='num'>0.363</td><td class='num'>0.824</td><td class='num'>0.579</td></tr><tr class='' data-band='6.6'><td>SeaCache</td><td class='num'>6.66×</td><td class='num'>17.46</td><td class='num'>0.673</td><td class='num'>0.409</td><td class='num'>0.131</td></tr><tr class='' data-band='6.6'><td>DPCache</td><td class='num'>6.50×</td><td class='num'>14.83</td><td class='num'>0.537</td><td class='num'>0.533</td><td class='num'>0.206</td></tr><tr class='ours' data-band='6.6'><td>SoftCache</td><td class='num'>6.91×</td><td class='num best'>18.58</td><td class='num best'>0.710</td><td class='num best'>0.327</td><td class='num best'>0.087</td></tr></tbody></table></div><div class="thumbs"></div><h3 class="fine cmp-title"></h3><div class="cmp-lanes"></div></div><div class="bench" data-model="hunyuan"><div class="seg bands" role="group" aria-label="speed band"><button aria-pressed="false" data-band="3.5">≈3.5×</button><button aria-pressed="true" data-band="5.4">≈5.4×</button><button aria-pressed="false" data-band="6.1">≈6.1×</button></div><div class="table-scroll"><table><caption>HunyuanVideo · 480p</caption><thead><tr><th>Method</th><th>Speedup</th><th>PSNR ↑</th><th>SSIM ↑</th><th>LPIPS ↓</th><th>DreamSim ↓</th></tr></thead><tbody><tr class='band-start' data-band='3.5'><td>SeaCache</td><td class='num'>3.53×</td><td class='num'>23.63</td><td class='num'>0.778</td><td class='num'>0.203</td><td class='num'>0.102</td></tr><tr class='' data-band='3.5'><td>DPCache</td><td class='num'>3.28×</td><td class='num'>23.70</td><td class='num'>0.786</td><td class='num'>0.182</td><td class='num'>0.092</td></tr><tr class='ours' data-band='3.5'><td>SoftCache</td><td class='num'>3.52×</td><td class='num best'>26.48</td><td class='num best'>0.843</td><td class='num best'>0.141</td><td class='num best'>0.067</td></tr><tr class='band-start' data-band='5.4'><td>SeaCache</td><td class='num'>5.33×</td><td class='num'>21.82</td><td class='num'>0.713</td><td class='num'>0.292</td><td class='num'>0.162</td></tr><tr class='' data-band='5.4'><td>DPCache</td><td class='num'>5.42×</td><td class='num'>20.34</td><td class='num'>0.682</td><td class='num'>0.293</td><td class='num'>0.162</td></tr><tr class='ours' data-band='5.4'><td>SoftCache</td><td class='num'>5.39×</td><td class='num best'>22.36</td><td class='num best'>0.742</td><td class='num best'>0.246</td><td class='num best'>0.129</td></tr><tr class='band-start' data-band='6.1'><td>SeaCache</td><td class='num'>6.11×</td><td class='num'>20.38</td><td class='num'>0.667</td><td class='num'>0.349</td><td class='num'>0.205</td></tr><tr class='' data-band='6.1'><td>DPCache</td><td class='num'>6.07×</td><td class='num'>20.06</td><td class='num'>0.660</td><td class='num'>0.310</td><td class='num'>0.172</td></tr><tr class='ours' data-band='6.1'><td>SoftCache</td><td class='num'>6.05×</td><td class='num best'>22.27</td><td class='num best'>0.739</td><td class='num best'>0.267</td><td class='num best'>0.141</td></tr></tbody></table></div><div class="thumbs"></div><h3 class="fine cmp-title"></h3><div class="cmp-lanes"></div></div></div>
+</section>
+
+<section class="block" id="bibtex">
+  <div class="block-head"><h2>BibTeX</h2></div>
+  <pre class="bib" id="bib"></pre>
+</section>
+</main>
+</body>
+</html>
