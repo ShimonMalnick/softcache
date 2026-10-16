@@ -1,0 +1,39 @@
+[project]
+name = "softcache"
+version = "0.1.0"
+description = "SoftCache: training-free caching with adaptive jumps for FLUX.1-dev, HunyuanVideo and Wan2.1."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.5",
+  "diffusers>=0.39",
+  "transformers>=5.13",
+  "accelerate",
+  "sentencepiece",
+  "protobuf",
+  "numpy",
+  "pillow",
+  "imageio",
+  "imageio-ffmpeg",
+  "ftfy",            # Wan tokenizer
+]
+
+[project.scripts]
+softcache = "softcache.generate:main"
+
+# pip installs the newest compatible versions; uv (and the Dockerfile) resolve to the exact stack the
+# release was gated on (H100, CUDA 12.1 wheels; see experiments/paper_release_bitexact).
+[tool.uv]
+constraint-dependencies = ["torch==2.5.1", "diffusers==0.39.0", "transformers==5.13.1"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
