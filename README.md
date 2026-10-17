@@ -1,4 +1,4 @@
-<h1 align="center">Official Implementation of SoftCache</h1>
+<h1 align="center">SoftCache</h1>
 <h3 align="center">Adaptive Step Size Caching for Diffusion Transformers</h3>
 
 <p align="center">
@@ -23,7 +23,7 @@
   </picture>
 </p>
 
-**Training-free, 3.5×–6.9× faster sampling for FLUX.1-dev, HunyuanVideo and Wan2.1.**
+**Official implementation of [SoftCache](https://arxiv.org/abs/2610.22369).** Training-free, 3.5×–6.9× faster sampling for FLUX.1-dev, HunyuanVideo and Wan2.1.
 Hard caching only decides whether to refresh or reuse. SoftCache also uses the cache's *headroom*
 to set how far each cached step jumps, even between scheduled nodes, and it is ahead of every
 baseline on all four fidelity metrics.
