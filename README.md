@@ -1,4 +1,4 @@
-<h1 align="center">SoftCache</h1>
+<h1 align="center">Official Implementation of SoftCache</h1>
 <h3 align="center">Adaptive Step Size Caching for Diffusion Transformers</h3>
 
 <p align="center">
