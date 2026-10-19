@@ -13,7 +13,8 @@
 <p align="center">
   <a href="https://arxiv.org/abs/2610.22369"><img src="https://img.shields.io/badge/arXiv-2610.22369-b31b1b" alt="arXiv"></a>
   <a href="https://www.malnick.net/softcache/"><img src="https://img.shields.io/badge/Project-Page-1B6898" alt="Project page"></a>
-  <!-- add when the links exist: 🤗 demo · ComfyUI -->
+  <a href="https://huggingface.co/spaces/ShimonM/softcache"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Demo-Hugging%20Face%20Space-ffd21e" alt="Hugging Face demo"></a>
+  <!-- add when the link exists: ComfyUI -->
 </p>
 
 <p align="center">
