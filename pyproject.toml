@@ -3,6 +3,13 @@ name = "softcache"
 version = "0.1.0"
 description = "SoftCache: training-free caching with adaptive jumps for FLUX.1-dev, HunyuanVideo and Wan2.1."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["diffusion", "caching", "acceleration", "flux", "wan", "hunyuanvideo", "diffusers"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 requires-python = ">=3.10"
 dependencies = [
   "torch>=2.5",
@@ -17,6 +24,12 @@ dependencies = [
   "imageio-ffmpeg",
   "ftfy",            # Wan tokenizer
 ]
+
+[project.urls]
+Homepage = "https://www.malnick.net/softcache/"
+Repository = "https://github.com/ShimonMalnick/softcache"
+Paper = "https://arxiv.org/abs/2610.22369"
+Demo = "https://huggingface.co/spaces/ShimonM/softcache"
 
 [project.scripts]
 softcache = "softcache.generate:main"
@@ -37,3 +50,7 @@ explicit = true
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# PyPI sdist = the package only; assets, the Gradio app, Docker and ComfyUI stay in the repo.
+[tool.hatch.build.targets.sdist]
+include = ["/softcache", "/README.md", "/LICENSE", "/pyproject.toml"]

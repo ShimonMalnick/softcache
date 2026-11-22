@@ -19,8 +19,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/teaser_dark.png">
-    <img src="assets/teaser.png" width="75%" alt="SoftCache sets how far each cached step goes: a reused step skips several scheduled nodes and lands between them">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ShimonMalnick/softcache/main/assets/teaser_dark.png">
+    <img src="https://raw.githubusercontent.com/ShimonMalnick/softcache/main/assets/teaser.png" width="75%" alt="SoftCache sets how far each cached step goes: a reused step skips several scheduled nodes and lands between them">
   </picture>
 </p>
 
@@ -30,7 +30,7 @@ to set how far each cached step jumps, even between scheduled nodes, and it is a
 baseline on all four fidelity metrics.
 
 <p align="center">
-  <img src="assets/qualitative.jpg" width="100%" alt="FLUX.1-dev on DrawBench at about 5.2x: reference, TeaCache, TaylorSeer, SeaCache, DPCache and SoftCache, with zoomed insets">
+  <img src="https://raw.githubusercontent.com/ShimonMalnick/softcache/main/assets/qualitative.jpg" width="100%" alt="FLUX.1-dev on DrawBench at about 5.2x: reference, TeaCache, TaylorSeer, SeaCache, DPCache and SoftCache, with zoomed insets">
   <br><sub>FLUX.1-dev on DrawBench at ≈5.2× (Fig. 4 of the paper). Red ellipses mark structural errors, and each inset enlarges one region.</sub>
 </p>
 
@@ -47,7 +47,7 @@ uv run softcache --prompts prompts.json --out outputs      # --model-family flux
 Or with pip (newest compatible `torch`, `diffusers` and `transformers`):
 
 ```bash
-pip install git+https://github.com/ShimonMalnick/softcache
+pip install softcache    # or: pip install git+https://github.com/ShimonMalnick/softcache
 softcache --prompts prompts.json --out outputs
 ```
 
@@ -75,7 +75,7 @@ image.save("zebra.png")
 ```
 
 <p align="center">
-  <img src="assets/demo.jpg" width="70%" alt="Reference and SoftCache on FLUX.1-dev for the prompt: A zebra to the right of a fire hydrant">
+  <img src="https://raw.githubusercontent.com/ShimonMalnick/softcache/main/assets/demo.jpg" width="70%" alt="Reference and SoftCache on FLUX.1-dev for the prompt: A zebra to the right of a fire hydrant">
   <br><sub>This prompt with <code>tau=0.8, beta=0.5</code>, the paper's 5.2× FLUX band (5.44× band mean).</sub>
 </p>
 
