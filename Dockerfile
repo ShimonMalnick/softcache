@@ -11,6 +11,6 @@ ENV UV_PYTHON=3.11 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv \
 WORKDIR /app
 COPY . .
 # third_party/SeaCache is a git submodule: clone with --recursive before building
-RUN test -e third_party/SeaCache/FLUX && uv sync --frozen --no-dev
+RUN test -e third_party/SeaCache/FLUX && uv sync --frozen --no-dev --extra diffusers
 
 ENTRYPOINT ["softcache"]

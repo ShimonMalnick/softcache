@@ -40,14 +40,14 @@ From a clone (the exact tested stack, pinned in `uv.lock`):
 
 ```bash
 git clone --recursive https://github.com/ShimonMalnick/softcache && cd softcache    # SeaCache is a submodule
-uv sync
+uv sync --extra diffusers
 uv run softcache --prompts prompts.json --out outputs      # --model-family flux | hunyuan | wan
 ```
 
 Or with pip (newest compatible `torch`, `diffusers` and `transformers`):
 
 ```bash
-pip install softcache    # or: pip install git+https://github.com/ShimonMalnick/softcache
+pip install "softcache[diffusers]"    # or: pip install "softcache[diffusers] @ git+https://github.com/ShimonMalnick/softcache"
 softcache --prompts prompts.json --out outputs
 ```
 

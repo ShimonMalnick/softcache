@@ -5,8 +5,12 @@ import json
 from pathlib import Path
 
 import torch
-from diffusers import FluxPipeline, HunyuanVideoPipeline, WanPipeline
-from diffusers.utils import export_to_video
+
+try:
+    from diffusers import FluxPipeline, HunyuanVideoPipeline, WanPipeline
+    from diffusers.utils import export_to_video
+except ImportError as e:
+    raise SystemExit('softcache: the pipelines need the diffusers extra: pip install "softcache[diffusers]"') from e
 
 from . import flux, hunyuan, wan
 from .method import Config

@@ -1,0 +1,17 @@
+# Comfy Registry metadata. Publish from this folder: `comfy node publish` zips only the files here.
+[project]
+name = "softcache"
+version = "0.1.0"
+description = "SoftCache: training-free step caching with bigger sampler steps for FLUX.1-dev, HunyuanVideo and Wan 2.1."
+license = { text = "MIT License" }
+requires-python = ">=3.10"
+dependencies = ["softcache>=0.1.1"]
+
+[project.urls]
+Repository = "https://github.com/ShimonMalnick/softcache"
+Documentation = "https://github.com/ShimonMalnick/softcache/tree/main/comfyui/ComfyUI-SoftCache"
+
+[tool.comfy]
+PublisherId = "malnick"
+DisplayName = "SoftCache"
+Icon = ""

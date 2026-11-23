@@ -1409,9 +1409,14 @@ wheels = [
 
 [[package]]
 name = "softcache"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
+    { name = "torch" },
+]
+
+[package.optional-dependencies]
+diffusers = [
     { name = "accelerate" },
     { name = "diffusers" },
     { name = "ftfy" },
@@ -1423,24 +1428,24 @@ dependencies = [
     { name = "pillow" },
     { name = "protobuf" },
     { name = "sentencepiece" },
-    { name = "torch" },
     { name = "transformers" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate" },
-    { name = "diffusers", specifier = ">=0.39" },
-    { name = "ftfy" },
-    { name = "imageio" },
-    { name = "imageio-ffmpeg" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "protobuf" },
-    { name = "sentencepiece" },
+    { name = "accelerate", marker = "extra == 'diffusers'" },
+    { name = "diffusers", marker = "extra == 'diffusers'", specifier = ">=0.39" },
+    { name = "ftfy", marker = "extra == 'diffusers'" },
+    { name = "imageio", marker = "extra == 'diffusers'" },
+    { name = "imageio-ffmpeg", marker = "extra == 'diffusers'" },
+    { name = "numpy", marker = "extra == 'diffusers'" },
+    { name = "pillow", marker = "extra == 'diffusers'" },
+    { name = "protobuf", marker = "extra == 'diffusers'" },
+    { name = "sentencepiece", marker = "extra == 'diffusers'" },
     { name = "torch", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "transformers", specifier = ">=5.13" },
+    { name = "transformers", marker = "extra == 'diffusers'", specifier = ">=5.13" },
 ]
+provides-extras = ["diffusers"]
 
 [[package]]
 name = "sympy"

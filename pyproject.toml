@@ -1,6 +1,6 @@
 [project]
 name = "softcache"
-version = "0.1.0"
+version = "0.1.1"
 description = "SoftCache: training-free caching with adaptive jumps for FLUX.1-dev, HunyuanVideo and Wan2.1."
 readme = "README.md"
 license = "MIT"
@@ -12,7 +12,11 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-  "torch>=2.5",
+  "torch>=2.5",      # the method itself, and the ComfyUI nodes, need only torch
+]
+
+[project.optional-dependencies]
+diffusers = [        # the FLUX / HunyuanVideo / Wan pipelines and the `softcache` CLI
   "diffusers>=0.39",
   "transformers>=5.13",
   "accelerate",
