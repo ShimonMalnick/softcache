@@ -9,6 +9,8 @@ Four nodes:
 
 ## Install
 
+Install **SoftCache** from ComfyUI-Manager (or `comfy node install softcache`) and restart ComfyUI. By hand:
+
 ```bash
 pip install softcache      # needs only torch; leaves ComfyUI's own packages alone
 git clone https://github.com/ShimonMalnick/softcache

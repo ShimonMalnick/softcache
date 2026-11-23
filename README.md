@@ -14,7 +14,8 @@
   <a href="https://arxiv.org/abs/2610.22369"><img src="https://img.shields.io/badge/arXiv-2610.22369-b31b1b" alt="arXiv"></a>
   <a href="https://www.malnick.net/softcache/"><img src="https://img.shields.io/badge/Project-Page-1B6898" alt="Project page"></a>
   <a href="https://huggingface.co/spaces/ShimonM/softcache"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Demo-Hugging%20Face%20Space-ffd21e" alt="Hugging Face demo"></a>
-  <!-- add when the link exists: ComfyUI -->
+  <a href="https://registry.comfy.org/nodes/softcache"><img src="https://img.shields.io/badge/ComfyUI-Registry-2B2B2B" alt="ComfyUI Registry"></a>
+  <a href="https://pypi.org/project/softcache/"><img src="https://img.shields.io/pypi/v/softcache?color=3775A9" alt="PyPI"></a>
 </p>
 
 <p align="center">
