@@ -1,6 +1,6 @@
 [project]
 name = "softcache"
-version = "0.1.1"
+version = "0.1.2"
 description = "SoftCache: training-free caching with adaptive jumps for FLUX.1-dev, HunyuanVideo and Wan2.1."
 readme = "README.md"
 license = "MIT"
