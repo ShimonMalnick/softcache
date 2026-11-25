@@ -113,10 +113,11 @@ export_to_video(frames, "cat.mp4", fps=16)
 | `--jf-max` | 8.0 | max jump length |
 | `--device` | `cuda:0` | GPU to run on |
 | `--low-memory` | off | encode all prompts first, then move the text encoders to the CPU |
+| `--solver` | `euler` | Wan only: `unipc` keeps Wan's own UniPC scheduler |
 | `--model`, `--steps`, `--height`, `--width`, `--num-frames`, `--guidance` | per model | |
 
 FLUX.1-dev is gated on Hugging Face: accept its license and run `huggingface-cli login`.
-Wan uses first-order Euler instead of its default UniPC scheduler.
+Wan uses first-order Euler instead of its default UniPC scheduler unless you pass `--solver unipc`.
 ## Gradio demo
 
 FLUX only. Fits a 32 GB GPU (the text encoders and the transformer take turns on it).

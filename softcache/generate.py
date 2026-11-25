@@ -45,11 +45,17 @@ def main():
     ap.add_argument("--device", default="cuda:0", help="GPU to run on")
     ap.add_argument("--low-memory", action="store_true",
                     help="encode all prompts first, then move the text encoders to the CPU")
+    ap.add_argument("--solver", choices=("euler", "unipc"), default="euler",
+                    help="Wan only: unipc keeps Wan's own UniPC scheduler instead of Euler")
     args = ap.parse_args()
+    if args.solver != "euler" and args.model_family != "wan":
+        ap.error("--solver is Wan only")
 
     pipeline_cls, sampler, default_model, defaults, fps = FAMILIES[args.model_family]
     options = {k: getattr(args, k) if getattr(args, k) is not None else v
                for k, v in defaults.items()}
+    if args.model_family == "wan":
+        options["solver"] = args.solver
     items = json.loads(Path(args.prompts).read_text())
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

@@ -5,7 +5,7 @@ prompt). One staleness signal and one decision serve both, since block 0's modul
 on the timestep only; each branch keeps its own block residuals for Residual Motion."""
 
 import torch
-from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 
 from .method import Config, decide, euler, execution_device, moved_residual, regrid_tail
 from util_seacache import apply_sea_from_ab, rel_l1  # SeaCache submodule, see __init__.py
@@ -23,15 +23,22 @@ def encode(pipe, prompt: str, negative_prompt: str = ""):
 
 
 def generate(pipe, prompt, seed: int, cfg: Config, num_steps: int = 50, height: int = 480,
-             width: int = 832, num_frames: int = 81, guidance: float = 6.0):
-    """One video. `prompt` is a string, or the output of `encode`. Returns (list of PIL frames, stats dict)."""
+             width: int = 832, num_frames: int = 81, guidance: float = 6.0, solver: str = "euler"):
+    """One video. `prompt` is a string, or the output of `encode`. Returns (list of PIL frames, stats dict).
+    `solver="unipc"` keeps Wan's own UniPC scheduler instead of Euler. Its grid differs from Euler's
+    (it ends at sigma~0.058 before the step to 0), so the two are not interchangeable references."""
     tr = pipe.transformer
     embeds = encode(pipe, prompt) if isinstance(prompt, str) else prompt
     device = execution_device(pipe, tr)
     tr.to(device)      # no-op unless diffusers' offload hooks parked it; the loop bypasses them
     prompt_embeds, negative_embeds = (t.to(device) for t in embeds)
-    # Wan ships a UniPC scheduler; SoftCache takes first-order Euler steps on its shifted grid
-    if not isinstance(pipe.scheduler, FlowMatchEulerDiscreteScheduler):
+    if solver not in ("euler", "unipc"):
+        raise ValueError(f"solver must be 'euler' or 'unipc', not {solver!r}")
+    if solver == "unipc" and not isinstance(pipe.scheduler, UniPCMultistepScheduler):
+        raise ValueError("solver='unipc' needs the checkpoint's UniPCMultistepScheduler "
+                         "(an earlier solver='euler' call on this pipe replaced it)")
+    # Wan ships a UniPC scheduler; by default SoftCache takes first-order Euler steps on its shifted grid
+    if solver == "euler" and not isinstance(pipe.scheduler, FlowMatchEulerDiscreteScheduler):
         pipe.scheduler = FlowMatchEulerDiscreteScheduler(
             num_train_timesteps=pipe.scheduler.config.num_train_timesteps,
             shift=pipe.scheduler.config.flow_shift)
@@ -42,25 +49,30 @@ def generate(pipe, prompt, seed: int, cfg: Config, num_steps: int = 50, height: 
                                    torch.float32, device, generator)
 
     latents, stats = denoise(tr, latents, sigmas, pipe.scheduler.timesteps, prompt_embeds,
-                             negative_embeds, guidance, cfg)
+                             negative_embeds, guidance, cfg,
+                             unipc=pipe.scheduler if solver == "unipc" else None)
     image = decode(pipe, latents)
     pipe.maybe_free_model_hooks()
     return image, stats
 
 
 @torch.no_grad()
-def denoise(tr, latents, sigmas, timesteps, prompt_embeds, negative_embeds, guidance, cfg):
+def denoise(tr, latents, sigmas, timesteps, prompt_embeds, negative_embeds, guidance, cfg,
+            unipc=None):
     """The sampling loop: per node, measure staleness, decide fresh / cache / jump, predict the
     guided velocity, and take an Euler step (a jump also shortens the remaining schedule).
-    `timesteps` are the scheduler's, one per node of the original `sigmas`."""
+    `timesteps` are the scheduler's, one per node of the original `sigmas`. With `unipc` (a
+    UniPCMultistepScheduler after `set_timesteps`) each step is that scheduler's instead."""
     p_t, p_h, p_w = tr.config.patch_size
     _, _, frames, height, width = latents.shape
     grid = (frames // p_t, height // p_h, width // p_w)
     rotary = tr.rope(latents)
     # On the grid, the scheduler's own timestep; a jump's landing is off the grid, and there
-    # the timestep is sigma times the grid's timestep/sigma ratio (~1000).
+    # the timestep is sigma times the grid's timestep/sigma ratio (~1000). UniPC stores integer
+    # timesteps, so its ratio comes from the config; an off-grid one truncates the same way.
     on_grid = dict(zip(sigmas, timesteps))
-    scale = float(timesteps[0]) / sigmas[0]
+    scale = (float(timesteps[0]) / sigmas[0] if unipc is None
+             else float(unipc.config.num_train_timesteps))
 
     num_steps = len(sigmas) - 1
     acc = 0.0                       # SeaCache staleness accumulated since the last refresh
@@ -112,7 +124,10 @@ def denoise(tr, latents, sigmas, timesteps, prompt_embeds, negative_embeds, guid
             n_before = len(sigmas)
             sigmas = regrid_tail(sigmas, i, sigma_next)
             n_skipped += n_before - len(sigmas)
-        latents = euler(latents, sigma_next - sigma, v)
+            if unipc is not None:
+                _unipc_regrid(unipc, i, sigmas)
+        latents = (euler(latents, sigma_next - sigma, v) if unipc is None
+                   else _unipc_step(unipc, i, latents, v))
         actions.append(action[0].upper())
         i += 1
 
@@ -120,6 +135,24 @@ def denoise(tr, latents, sigmas, timesteps, prompt_embeds, negative_embeds, guid
              "jumps": actions.count("J"), "skipped_nodes": n_skipped,
              "sigmas": sigmas}
     return latents, stats
+
+
+def _unipc_regrid(scheduler, i, sigmas):
+    """After a jump at node i, splice the loop's new schedule into the scheduler. Entries up to i
+    stay, so the multistep history keeps the sigmas its stored outputs were evaluated at (no reset
+    across a jump). `timesteps` shrinks to match: diffusers keys its first-order final step off
+    its length."""
+    old = scheduler.sigmas
+    scheduler.sigmas = torch.cat([old[:i], torch.tensor(sigmas[i:], dtype=old.dtype, device=old.device)])
+    scheduler.timesteps = scheduler.timesteps[:len(scheduler.sigmas) - 1]
+    scheduler.num_inference_steps = len(scheduler.timesteps)
+
+
+def _unipc_step(scheduler, i, latents, v):
+    """One UniPC step at loop node i. A cached node's velocity feeds the corrector too. The
+    timestep argument is inert: the step reads sigmas[i] once its index is pinned."""
+    scheduler._step_index = i
+    return scheduler.step(v, scheduler.timesteps[i], latents).prev_sample
 
 
 def _block0_modulated(block, hs, temb_proj):
